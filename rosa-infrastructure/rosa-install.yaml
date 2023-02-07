@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  pEnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: rosa1
+  pSharedServicesVpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.100.0.0/16
+  pSharedServicesPrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.100.0.0/24
+  pSharedServicesPrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.100.1.0/24
+  pRosaVpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.1.0.0/16
+  pRosaPrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.1.0.0/24
+  pRosaPrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.1.1.0/24
+  pRosaPrivateSubnet3CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.1.2.0/24
+  pEgressVpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.0.0.0/16
+  pEgressPublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.0.0/24
+  # EgressPublicSubnet2CIDR:
+  #   Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+  #   Type: String
+  #   Default: 10.0.1.0/24
+  pEgressPrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.2.0/24
+  # EgressPrivateSubnet2CIDR:
+  #   Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+  #   Type: String
+  #   Default: 10.0.3.0/24
+  pNumberOfAZs:
+    Type: Number
+    AllowedValues:
+      - 1
+      - 3
+    Default: 3
+    Description: Number of Availability Zones. The number of Availability Zones for a Multi AZ ROSA cluster should be 3.
+  pEnableELBServiceLinkedRole:
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "To create the ELB Service Linked Role, set this parameter to true"
+    Type: String
+  pEnableVpcFlowLogs:
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "Send VPC Flow logs to AWS CloudWatch"
+    Type: String
+  pVpcFlowLogGroupRetentionDays:
+    Default: 365
+    Description: "VPC Flow logs retention days"
+    Type: Number
+  
+  pROSAInstallIaCCodeCommitRepoName:
+    Type: String
+    Description: The project name, also the CodeCommit Repository name where the Infrastructure
+      as Code (IaC) for ROSA Installation and configuration will be stored
+    Default: rosa-install
+  pROSAUnInstallIaCCodeCommitRepoName:
+    Type: String
+    Description: The project name, also the CodeCommit Repository name where the Infrastructure
+      as Code (IaC) for ROSA Installation and configuration will be stored
+    Default: rosa-uninstall
+  pROSABuildSpecCodeCommitRepoName:
+    Type: String
+    Description: The CodeCommit repository name where the CodePipeline buildspecs for
+      Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored
+    Default: rosa-codepipeline-buildspec-scripts
+  pROSAInstallCodeBucket:
+    Type: String
+    Description: The S3 Bucket where initial code for ROSA Installation and configuration
+      CodeCommit repos will be stored
+    Default: rosa-install-code-apg2
+  pROSAInstallContainerECRRepoName:
+    Type: String
+    Description: Name of the ECR repository where the ROSA Install Container image will
+      reside. must be lowercase.
+    Default: rosa-install
+  pAWSCliLocalECRRepoName:
+    Type: String
+    Description: Name of the ECR repository where the aws-cli base image local copy
+      must exist, copy pulled from docker hub. must be lowercase.
+    Default: amazon/aws-cli
+  pLatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+  pInstanceType:
+    Type: String
+    Default: t2.micro
+    Description: Select a valid instance type for your Region
+    AllowedValues:
+    - t2.micro
+    - t3.micro
+    - m4.large
+    - m5.large
+  pRosaKMSKeyAlias:
+    Type: String
+    Default: rosa-install-kms-key
+    Description: Name for customer managed KMS key for ROSA installation 
+  pRosaToken:
+    Type: String
+    NoEcho : true
+    Description: OpenShift Cluster Manager API Token, extract token from https://console.redhat.com/openshift/token and update secret prior to cluster creation, register for a new account at https://sso.redhat.com/auth/realms/redhat-external/login-actions/registration?execution=9ec9ca44-2f3b-4b60-ac66-299705730f29&client_id=https%3A%2F%2Fwww.redhat.com%2Fwapps%2Fugc-oidc&tab_id=49SAYvzA1rA 
+    Default: xxxxx
+  pCreateRosaTokenSecret:
+    Type: String
+    AllowedValues : 
+      - 'true'
+      - 'false'
+    Default : 'true'
+    Description: "If true, then the ROSA_TOKEN secret will be created in Secrets Manager with pRosaToken secret"
+Resources:
+  RosaVPCs:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-vpcs.yaml
+      Parameters:
+        pEnvironmentName:
+          Ref: pEnvironmentName
+        pSharedServicesVpcCIDRBlock:
+          Ref: pSharedServicesVpcCIDR
+        pSharedServicesPrivateSubnet1CIDR:
+          Ref: pSharedServicesPrivateSubnet1CIDR
+        pSharedServicesPrivateSubnet2CIDR:
+          Ref: pSharedServicesPrivateSubnet2CIDR
+        pNumberOfAZs:
+          Ref: pNumberOfAZs
+        pEnableELBServiceLinkedRole:
+          Ref: pEnableELBServiceLinkedRole
+        pEnableVpcFlowLogs:
+          Ref: pEnableVpcFlowLogs
+        pVpcFlowLogGroupRetentionDays:
+          Ref: pVpcFlowLogGroupRetentionDays
+        pRosaVpcCidrBlock:
+          Ref: pRosaVpcCIDR
+        pRosaVpcSubnetACidrBlock:
+          Ref: pRosaPrivateSubnet1CIDR
+        pRosaVpcSubnetBCidrBlock:
+          Ref: pRosaPrivateSubnet2CIDR
+        pRosaVpcSubnetCCidrBlock:
+          Ref: pRosaPrivateSubnet3CIDR
+        pEgressVpcCidrBlock:
+          Ref: pEgressVpcCIDR
+        pEgressVpcPublicSubnetACidrBlock:
+          Ref: pEgressPublicSubnet1CIDR
+        # pEgressPublicSubnet2CIDR:
+        #   Ref: EgressPublicSubnet2CIDR
+        pEgressVpcPrivateSubnetCidrBlock:
+          Ref: pEgressPrivateSubnet1CIDR
+        # pEgressPrivateSubnet2CIDR:
+        #   Ref: EgressPrivateSubnet2CIDR
+
+  RosaCodePipeline:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-install-codepipeline.json
+      Parameters:
+        ROSAInstallIaCCodeCommitRepoName:
+          Ref: pROSAInstallIaCCodeCommitRepoName
+        ROSAUnInstallIaCCodeCommitRepoName:
+          Ref: pROSAUnInstallIaCCodeCommitRepoName
+        ROSABuildSpecCodeCommitRepoName:
+          Ref: pROSABuildSpecCodeCommitRepoName
+        ROSAInstallCodeBucket:
+          Ref: pROSAInstallCodeBucket
+        ROSAInstallContainerECRRepoName:
+          Ref: pROSAInstallContainerECRRepoName
+        AWSCliLocalECRRepoName:
+          Ref: pAWSCliLocalECRRepoName
+        ROSAVPC:
+          !GetAtt RosaVPCs.Outputs.oRosaVpc
+        CodePipelineVPC:
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpc
+        CodePipelineSubnets: !Join [",", [
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpcPrivateSubnetA ,
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpcPrivateSubnetB
+        ]]
+        CodePipelineVPCRouteTables:
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpcRouteTable
+        pRosaInstallContainerRoleArn:
+          !GetAtt RosaInstallContainerRole.Outputs.ROSAInstallContainerRoleARN
+        pRosaInstallCodeBuildRoleName:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.ROSAInstallCodeBuildRoleName
+        pRosaInstallrEc2InstanceRoleName:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.rEc2InstanceRoleName
+        pRosaKMSKey:
+          !GetAtt RosaInstallContainerRole.Outputs.ROSAInstallKMSKeyARN
+        pRosaToken:
+          Ref: pRosaToken
+        pCreateRosaTokenSecret:
+          Ref: pCreateRosaTokenSecret
+
+  RosaInstallCodeBuildEC2Roles:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-install-codebuild-ec2-roles.json
+
+  RosaInstallContainerRole:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-install-container-role.json
+      Parameters:
+        ROSAInstallContainerECRRepoName:
+          Ref: pROSAInstallContainerECRRepoName
+        pRosaInstallCodeBuildRoleArn:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.ROSAInstallCodeBuildRoleARN
+        pRosaInstallrEc2InstanceRoleArn:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.rEc2InstanceRoleARN
+        pRosaKMSKeyAlias:
+          Ref: pRosaKMSKeyAlias
+          
+  RosaInstallContainerRoleAssumePolicy:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-install-assume-role.json
+      Parameters:
+        pRosaInstallContainerRoleArns:
+          !GetAtt RosaInstallContainerRole.Outputs.ROSAInstallContainerRoleARN
+        pRosaInstallCodeBuildRoleName:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.ROSAInstallCodeBuildRoleName
+        pRosaInstallrEc2InstanceRoleName:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.rEc2InstanceRoleName
+
+  RosaInstallSSMEC2:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: rosa-install-ssm-ec2.json
+      Parameters:
+        CodePipelineVPC:
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpc
+        CodePipelineSubnets: !Join [",", [
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpcPrivateSubnetA ,
+          !GetAtt RosaVPCs.Outputs.oSharedServicesVpcPrivateSubnetB
+        ]]
+        pCodePipelineVPCCidr:
+          Ref: pSharedServicesVpcCIDR
+        pLatestAmiId:
+          Ref: pLatestAmiId
+        pInstanceType:
+          Ref: pInstanceType
+        pRosaInstallrEc2InstanceRoleName:
+          !GetAtt RosaInstallCodeBuildEC2Roles.Outputs.rEc2InstanceRoleName

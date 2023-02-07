@@ -1,0 +1,66 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Creates the IAM Role: ROSAInstallContainerRole with necessary permissions to create and destroy private AWS ROSA cluster installation and uninstallation in the current account",
+    "Metadata" : {
+      "AdditionalInformation":"This Role is assummed by a ROSA Installation Container Code Build Role either in the same account or a shared account in a AWS Landing Zone Organization"
+    },
+    "Resources": {  
+        "CodeBuildRole" :{
+            "Type":"AWS::IAM::Role",
+            "Properties":{
+                "Description":"CodePipeline role for building and deploying artifacts. This role will run the ROSA installation CodeBuild project in the Shared Services Account",
+                 "AssumeRolePolicyDocument": {
+                    "Version":"2012-10-17",
+                    "Statement":{
+                        "Effect":"Allow",
+                        "Principal":{
+                            "Service":"codebuild.amazonaws.com"
+                        },
+                        "Action":"sts:AssumeRole"
+                    }
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+                    "arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess"
+                ]
+            }
+        },      
+        "rEc2InstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                 "Statement": {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ec2.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              },
+              "Path": "/",
+              "ManagedPolicyArns": [
+                {"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"}
+              ]
+            }
+          }
+    },
+    "Outputs": {
+        "ROSAInstallCodeBuildRoleARN": {
+            "Value": {"Fn::GetAtt":["CodeBuildRole","Arn"]},
+            "Description": "The ARN for the ROSA Installation Code Build Role"
+        },
+        "ROSAInstallCodeBuildRoleName": {
+            "Value": {"Ref":"CodeBuildRole"},
+            "Description": "The Name for the ROSA Installation Code Build Role"
+        },  
+        "rEc2InstanceRoleARN": {
+            "Value": {"Fn::GetAtt":["rEc2InstanceRole","Arn"]},
+            "Description": "The ARN for the ROSA Installation SSM connectable EC2 Instance Role"
+        },  
+        "rEc2InstanceRoleName": {
+            "Value": {"Ref":"rEc2InstanceRole"},
+            "Description": "The Name for the ROSA Installation SSM connectable EC2 Instance Role"
+        }
+    }
+}  

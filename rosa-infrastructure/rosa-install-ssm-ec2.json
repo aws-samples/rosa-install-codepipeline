@@ -1,0 +1,208 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Creates the IAM Policy: AssumeRoleRosaInstallContainer with the permission to assume the ROSA Installation Container Role in different accounts",
+    "Metadata" : {
+      "AdditionalInformation":"This Role is assummed by a ROSA Installation Container Code Build Role and the EC2 Instance Role in either in the current account, preferably a shared account in a AWS Landing Zone Organization"
+    },
+    "Parameters": {
+        "ROSAInstallIaCCodeCommitRepoName": {
+            "Type":"String",
+            "Description":"The project name, also the CodeCommit Repository name where the Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored",
+            "Default":"rosa-install"
+        },"ROSAUnInstallIaCCodeCommitRepoName": {
+            "Type":"String",
+            "Description":"The project name, also the CodeCommit Repository name where the Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored",
+            "Default":"rosa-uninstall"
+        },"CodePipelineVPC": {
+            "Type": "String",
+            "Description" : "ID of private VPC in which CodePipeline should have access to, in order to reach services created in different private VPCs connected by TGW",
+            "Default":"vpc-xxxxxxxxxxxxxxxxx"
+        },"CodePipelineSubnets": {
+            "Type": "CommaDelimitedList",
+            "Description" : "comma separate list of subnets in private VPC",
+            "Default":"subnet-xxxxxxxxxxxxxxxxx, subnet-xxxxxxxxxxxxxxxxx"
+        },"pLatestAmiId": {
+            "Type": "AWS::EC2::Image::Id",
+            "Default": "ami-07693758d0ebc2111"
+        },"pInstanceType": {
+            "Type": "String",
+            "Default": "t2.micro",
+            "Description": "Select a valid instance type for your Region",
+            "AllowedValues": ["t2.micro","t3.micro", "m4.large", "m5.large"]
+        }, "pRosaInstallrEc2InstanceRoleName": {
+            "Type": "String",
+            "Description" : "ROSAInstall SSM connected EC2 Instance Role in current accounts where the ROSA Installation CodePipeline is running",
+            "Default":"rosa-install-codepipeline-roles-rEc2InstanceRole-XXXXXXXXXXXX"
+        }, "pCodePipelineVPCCidr": {
+          "Type": "String",
+          "Description" : "CodePipeline VPC CIDR",
+          "Default":"10.100.0.0/16"
+        }  
+    },
+    "Resources": {
+        "SSMCodePipelineVPCEndPoint": {
+            "Type": "AWS::EC2::VPCEndpoint",
+            "Properties": {
+               "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ssm"},
+               "SecurityGroupIds": [
+                  {"Ref": "rSecurityGroupVpcEndPoint"}
+               ],
+               "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+               "VpcEndpointType": "Interface",
+               "PrivateDnsEnabled": true,
+               "VpcId": {"Ref": "CodePipelineVPC"}
+            }
+          },    
+        "SSMMessagesCodePipelineVPCEndPoint": {
+           "Type": "AWS::EC2::VPCEndpoint",
+           "Properties": {
+              "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ssmmessages"},
+              "SecurityGroupIds": [
+                 {"Ref": "rSecurityGroupVpcEndPoint"}
+              ],
+              "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+              "VpcEndpointType": "Interface",
+              "PrivateDnsEnabled": true,
+              "VpcId": {"Ref": "CodePipelineVPC"}
+           }
+          },    
+        "EC2MessagesCodePipelineVPCEndPoint": {
+            "Type": "AWS::EC2::VPCEndpoint",
+            "Properties": {
+            "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ec2messages"},
+            "SecurityGroupIds": [
+                {"Ref": "rSecurityGroupVpcEndPoint"}
+            ],
+            "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+            "VpcEndpointType": "Interface",
+            "PrivateDnsEnabled": true,
+            "VpcId": {"Ref": "CodePipelineVPC"}
+          }
+          },
+        "rSecurityGroupEc2Instance": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+              "GroupDescription": "SG for SSM Jumpbox",
+              "VpcId": {"Ref": "CodePipelineVPC"},
+              "SecurityGroupEgress": [
+                { "Description": "allow outbound HTTPS to all", "CidrIp": "10.0.0.0/8","FromPort": "443","ToPort": "443","IpProtocol": "tcp"},
+                { "Description": "allow outbound HTTP to all", "IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "10.0.0.0/8" },
+                { "Description": "allow outbound OpenShift mgmt console access to the VPCs in the Landing Zone", "CidrIp": "10.0.0.0/8","FromPort": "6443", "ToPort": "6443", "IpProtocol": "tcp"}
+              ]
+            }
+          },
+        "rSSMEC2AuthorizeEgressPolicy": {
+          "Type": "AWS::IAM::Policy",
+          "Properties": {
+            "PolicyName":"SSMEC2AuthEgress",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Sid": "VisualEditor0",
+                    "Effect": "Allow",
+                    "Action": [
+                        "ec2:AuthorizeSecurityGroupEgress",
+                        "ec2:RevokeSecurityGroupEgress"
+                    ],
+                    "Resource": [
+                      {
+                        "Fn::Join":["",
+                          ["arn:aws:ec2:",
+                          {"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},
+                          ":security-group/",
+                          {"Fn::GetAtt":["rSecurityGroupEc2Instance", "GroupId"]}]]
+                      }
+                    ]
+                  }
+                ]
+              },
+            "Roles": [{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+          }
+          },          
+        "rSecurityGroupVpcEndPoint": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+              "GroupDescription": "SG for SSM VPC Endpoint",
+              "VpcId": {"Ref": "CodePipelineVPC"},
+              "SecurityGroupIngress" : [ { "Description": "allow inbound HTTPS from SSM SG", "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "SourceSecurityGroupId" : { "Ref":"rSecurityGroupEc2Instance"} } ],
+              "SecurityGroupEgress": [
+                { "Description": "allow outbound HTTPS to all within CodePipeline VPC", "CidrIp": {"Ref":"pCodePipelineVPCCidr"},"FromPort": "443","ToPort": "443","IpProtocol": "tcp"}
+              ]
+            }
+          },        
+        "rEc2InstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+              "Path": "/",
+              "Roles": [ {"Ref": "pRosaInstallrEc2InstanceRoleName"}]
+            }
+          }, 
+        "rEc2LaunchTemplate": {
+          "Type":"AWS::EC2::LaunchTemplate",
+          "Properties":{
+            "LaunchTemplateName":"MyLaunchTemplate",
+            "LaunchTemplateData":{
+              "MetadataOptions": {
+                "HttpTokens" : "required"
+              }
+            }
+          }
+          },           
+        "rEc2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "DependsOn": "rSSMEC2AuthorizeEgressPolicy",
+            "Properties": {
+              "ImageId": {"Ref": "pLatestAmiId"},
+              "InstanceType": {"Ref": "pInstanceType"},
+              "SubnetId":  { "Fn::Select" : [ "0", {"Ref": "CodePipelineSubnets"} ] },
+              "IamInstanceProfile": {"Ref": "rEc2InstanceProfile"}, 
+              "SecurityGroupIds": [{"Ref": "rSecurityGroupEc2Instance"}],
+              "Tags": [{
+                "Key": "Name",
+                "Value": "rosa-ssm-jumpbox"
+              }],
+              "LaunchTemplate": {
+                "LaunchTemplateName": "MyLaunchTemplate",
+                "Version": {"Fn::GetAtt":["rEc2LaunchTemplate","LatestVersionNumber"]}
+              },
+              "UserData" : {"Fn::Base64": {"Fn::Join": ["",[
+                "#!/bin/bash -xe\n",
+                "aws ec2 authorize-security-group-egress --region ",{"Fn::Sub": "${AWS::Region}"}, 
+                " --group-id ", {"Ref": "rSecurityGroupEc2Instance"},
+                " --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]' || true\n",
+                "sudo yum update -y\n",
+                "sudo yum install -y docker git\n",
+                "sudo pip3 install git-remote-codecommit; sudo ln -s /usr/local/bin/git-remote-codecommit /usr/bin\n",
+                "sudo service docker start\n",
+                "sudo systemctl enable docker\n",
+                "sudo yum install -y wget tar gzip gunzip which jq openssl bind-utils\n",
+                "sudo wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz\n",
+                "sudo wget https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz\n",
+                "sudo tar xvfz openshift-client-linux.tar.gz; sudo mv oc /usr/local/bin; sudo mv kubectl /usr/local/bin\n",
+                "sudo tar xvfz rosa-linux.tar.gz; sudo mv rosa /usr/local/bin\n",
+                "sudo mkdir /home/rosagitops; chmod a+w /home/rosagitops; cd /home/rosagitops\n",
+                "git clone codecommit::",{"Fn::Sub": "${AWS::Region}"},"://", {"Ref": "ROSAInstallIaCCodeCommitRepoName"},"\n",
+                "git clone codecommit::",{"Fn::Sub": "${AWS::Region}"},"://", {"Ref": "ROSAUnInstallIaCCodeCommitRepoName"},"\n",
+                "export HOME=/home/ssm-user ; git config --global --add safe.directory /home/rosagitops/rosa-install || true ; git config --global --add safe.directory /home/rosagitops/rosa-uninstall || true","\n",
+                "SHARED_SERVICES_ECR_ACCOUNT=",{"Fn::Sub": "${AWS::AccountId}"},"\n",
+                "REGION=",{"Fn::Sub": "${AWS::Region}"},"\n",
+                "aws ecr get-login-password --region ${REGION} | sudo docker login --username AWS --password-stdin $SHARED_SERVICES_ECR_ACCOUNT.dkr.ecr.${REGION}.amazonaws.com\n",
+                "sudo docker pull $SHARED_SERVICES_ECR_ACCOUNT.dkr.ecr.${REGION}.amazonaws.com/rosa-install:latest\n",
+                "sudo docker tag $SHARED_SERVICES_ECR_ACCOUNT.dkr.ecr.${REGION}.amazonaws.com/rosa-install:latest rosa-install:latest\n",
+                "aws ec2 revoke-security-group-egress --region ",{"Fn::Sub": "${AWS::Region}"}, 
+                " --group-id ", 
+                {"Ref": "rSecurityGroupEc2Instance"},
+                " --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]' || true\n"
+                ]]}
+              } 
+            }
+          }
+    },
+    "Outputs" : {
+        "JumpboxEC2Instance": {
+            "Value": {"Ref": "rEc2Instance"},
+            "Description": "SSM connectable jumpbox VM to access the private ROSA cluster in the private ROSA VPC"
+          }
+    }
+}

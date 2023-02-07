@@ -1,0 +1,41 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Creates the IAM Policy: AssumeRoleRosaInstallContainer with the permission to assume the ROSA Installation Container Role in different accounts",
+    "Metadata" : {
+      "AdditionalInformation":"This Role is assummed by a ROSA Installation Container Code Build Role and the EC2 Instance Role in either in the current account, preferably a shared account in a AWS Landing Zone Organization"
+    },
+    "Parameters": {
+        "pRosaInstallContainerRoleArns": {
+            "Type": "CommaDelimitedList",
+            "Description" : "comma separate list of ROSAInstallContainer Role ARNs in one or more accounts where the ROSA cluster needs to be installed",
+            "Default":"arn:aws:iam::123456789012:role/rosa-install-container-ro-ROSAInstallContainerRole-XXXXXXXXXXXXX, arn:aws:iam::123456789012:role/rosa-install-container-ro-ROSAInstallContainerRole-XXXXXXXXXXXXX"
+        }, "pRosaInstallCodeBuildRoleName": {
+            "Type": "String",
+            "Description" : "ROSAInstall CodeBuild Role in current accounts where the ROSA Installation CodePipeline is running",
+            "Default":"rosa-install-codepipeline-roles-CodeBuildRole-XXXXXXXXXXXX"
+        }, "pRosaInstallrEc2InstanceRoleName": {
+            "Type": "String",
+            "Description" : "ROSAInstall SSM connected EC2 Instance Role in current accounts where the ROSA Installation CodePipeline is running",
+            "Default":"rosa-install-codepipeline-roles-rEc2InstanceRole-XXXXXXXXXXXX"
+        }  
+    },    
+    "Resources": {  
+        "rAssumeRoleRosaInstallContainerPolicy":{    
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName":"AssumeRoleRosaInstallContainer",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": "sts:AssumeRole",
+                        "Resource": {"Ref": "pRosaInstallContainerRoleArns"}
+                    }
+                    ]
+                },
+                "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+            }
+        }
+    }
+}

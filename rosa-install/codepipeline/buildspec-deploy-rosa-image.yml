@@ -1,0 +1,29 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+  pre_build:
+    commands:
+      - aws ec2 authorize-security-group-egress --group-id "${AWS_CODEPIPELINE_SECURITY_GROUP_ID}" --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]' || true
+      - aws ec2 authorize-security-group-egress --group-id "${AWS_CODEPIPELINE_SECURITY_GROUP_ID}" --ip-permissions IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges='[{CidrIp=0.0.0.0/0}]' || true
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - AWS_CLI_IMAGES=$(aws ecr list-images --repository-name=$AWS_CLI_LOCAL_IMG  --region $AWS_DEFAULT_REGION | jq -r '.imageIds | length')
+      - if [ "${AWS_CLI_IMAGES}" == 0 ]; then docker pull public.ecr.aws/aws-cli/aws-cli:latest ; docker tag public.ecr.aws/aws-cli/aws-cli:latest $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$AWS_CLI_LOCAL_IMG:mylatest; docker push $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$AWS_CLI_LOCAL_IMG:mylatest ; fi
+  build:
+    commands:
+      - echo Docker image build started on `date`
+      - docker build -t $IMAGE_REPO_NAME:$CODEBUILD_BUILD_NUMBER --build-arg AWS_ECR_ACCOUNT_ID=$AWS_ECR_ACCOUNT_ID --build-arg AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION --build-arg AWS_CLI_LOCAL_IMG=$AWS_CLI_LOCAL_IMG .
+      - docker tag $IMAGE_REPO_NAME:$CODEBUILD_BUILD_NUMBER $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$CODEBUILD_BUILD_NUMBER            
+      - docker tag $IMAGE_REPO_NAME:$CODEBUILD_BUILD_NUMBER $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG_LATEST            
+  post_build:
+    commands:
+      - aws ecr batch-delete-image --repository-name $IMAGE_REPO_NAME --image-ids imageTag=$IMAGE_TAG_LATEST
+      - echo Pushing the Docker image to ECR...
+      - docker images
+      - echo $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG_LATEST
+      - docker push $AWS_ECR_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG_LATEST
+    finally:
+      - aws ec2 revoke-security-group-egress --group-id "${AWS_CODEPIPELINE_SECURITY_GROUP_ID}" --ip-permissions IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges='[{CidrIp=0.0.0.0/0}]' || true
+      - aws ec2 revoke-security-group-egress --group-id "${AWS_CODEPIPELINE_SECURITY_GROUP_ID}" --ip-permissions IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges='[{CidrIp=0.0.0.0/0}]' || true

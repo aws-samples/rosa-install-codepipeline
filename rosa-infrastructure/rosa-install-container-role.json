@@ -1,0 +1,360 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Creates the IAM Role: ROSAInstallContainerRole with necessary permissions to create and destroy private AWS ROSA cluster installation and uninstallation in the current account",
+    "Metadata" : {
+      "AdditionalInformation":"This Role is assummed by a ROSA Installation Container Code Build Role either in the same account or a shared account in a AWS Landing Zone Organization"
+    },
+    "Parameters": {
+        "ROSAInstallContainerECRRepoName": {
+            "Type": "String",
+            "Description" : "Name of the ECR repository where the ROSA Install Container image will reside. must be lowercase.",
+            "Default":"rosa-install"
+        },"pRosaInstallCodeBuildRoleArn": {
+            "Type": "String",
+            "Description": "ARN for the ROSA Installation CodeBuild Role"
+        },"pRosaInstallrEc2InstanceRoleArn": {
+            "Type": "String",
+            "Description": "ARN for the ROSA Installation SSM connected EC2 Instance Role"
+        },"pRosaKMSKeyAlias": {
+            "Type": "String",
+            "Default": "rosa-install-kms-key",
+            "Description": "Name for customer managed KMS key for ROSA installation"
+          }   
+    },
+    "Resources": {  
+      "ROSAInstallContainerRole" :{
+        "Type":"AWS::IAM::Role",
+        "Properties":{
+            "Description":"ROSA Install Container role for building and deploying artifacts. This role will need expansive powers to deploy and configure AWS resources for ROSA clusters",                
+            "AssumeRolePolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Principal": {
+                          "AWS": [{"Ref": "pRosaInstallCodeBuildRoleArn"},{"Ref": "pRosaInstallrEc2InstanceRoleArn"}]
+                      },
+                      "Action": "sts:AssumeRole",
+                      "Condition": {}
+                  }
+              ]
+            },
+          "Policies": [ 
+            { 
+              "PolicyName":"ROSAInstallIAMPermissions",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "VisualEditor0",
+                        "Effect": "Allow",
+                        "Action": [
+                            "iam:UpdateAssumeRolePolicy",
+                            "iam:GetPolicyVersion",
+                            "iam:ListRoleTags",
+                            "iam:UpdateOpenIDConnectProviderThumbprint",
+                            "iam:RemoveRoleFromInstanceProfile",
+                            "iam:CreateRole",
+                            "iam:AttachRolePolicy",
+                            "iam:PutRolePolicy",
+                            "iam:AddRoleToInstanceProfile",
+                            "iam:DetachRolePolicy",
+                            "iam:ListAttachedRolePolicies",
+                            "iam:ListOpenIDConnectProviderTags",
+                            "iam:ListRolePolicies",
+                            "iam:DeleteOpenIDConnectProvider",
+                            "iam:GetRole",
+                            "iam:GetPolicy",
+                            "iam:RemoveClientIDFromOpenIDConnectProvider",
+                            "iam:ListEntitiesForPolicy",
+                            "iam:DeleteRole",
+                            "iam:UpdateRoleDescription",
+                            "iam:TagPolicy",
+                            "iam:DeleteServiceLinkedRole",
+                            "iam:GetOpenIDConnectProvider",
+                            "iam:GetRolePolicy",
+                            "iam:CreateInstanceProfile",
+                            "iam:UntagRole",
+                            "iam:PutRolePermissionsBoundary",
+                            "iam:TagRole",
+                            "iam:DeletePolicy",
+                            "iam:ListInstanceProfileTags",
+                            "iam:DeleteRolePermissionsBoundary",
+                            "iam:GetServiceLinkedRoleDeletionStatus",
+                            "iam:ListInstanceProfilesForRole",
+                            "iam:DeleteRolePolicy",
+                            "iam:ListPolicyTags",
+                            "iam:CreatePolicyVersion",
+                            "iam:DeleteInstanceProfile",
+                            "iam:GetInstanceProfile",
+                            "iam:CreateOpenIDConnectProvider",
+                            "iam:CreatePolicy",
+                            "iam:CreateServiceLinkedRole",
+                            "iam:ListPolicyVersions",
+                            "iam:UntagPolicy",
+                            "iam:UpdateRole",
+                            "iam:UntagOpenIDConnectProvider",
+                            "iam:AddClientIDToOpenIDConnectProvider",
+                            "iam:TagOpenIDConnectProvider",
+                            "iam:DeletePolicyVersion",
+                            "iam:SetDefaultPolicyVersion"
+                        ],
+                        "Resource": [
+                            {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:policy/*"},
+                            {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:oidc-provider/*"},
+                            {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:role/*"},
+                            {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:instance-profile/*"}
+                        ]
+                    },
+                    {
+                        "Sid": "VisualEditor1",
+                        "Effect": "Allow",
+                        "Action": [
+                            "iam:ListPolicies",
+                            "iam:ListOpenIDConnectProviders",
+                            "iam:GetServiceLastAccessedDetailsWithEntities",
+                            "iam:ListRoles",
+                            "iam:GetServiceLastAccessedDetails",
+                            "iam:GetOrganizationsAccessReport"
+                        ],
+                        "Resource": "*"
+                    }
+                ]
+            }
+            },{ 
+              "PolicyName":"ROSAInstallServiceQuotasPermissions",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Action": [
+                            "servicequotas:ListServices",
+                            "servicequotas:TagResource",
+                            "servicequotas:GetRequestedServiceQuotaChange",
+                            "servicequotas:ListTagsForResource",
+                            "servicequotas:GetServiceQuota",
+                            "servicequotas:ListAWSDefaultServiceQuotas",
+                            "servicequotas:GetServiceQuotaIncreaseRequestFromTemplate",
+                            "servicequotas:ListServiceQuotaIncreaseRequestsInTemplate",
+                            "servicequotas:ListServiceQuotas",
+                            "servicequotas:GetAWSDefaultServiceQuota",
+                            "servicequotas:UntagResource",
+                            "servicequotas:GetAssociationForServiceQuotaTemplate",
+                            "servicequotas:ListRequestedServiceQuotaChangeHistory",
+                            "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota",
+                            "elasticloadbalancing:DescribeLoadBalancerPolicyTypes",
+                            "elasticloadbalancing:DescribeLoadBalancers",
+                            "elasticloadbalancing:DescribeListeners",
+                            "elasticloadbalancing:DescribeLoadBalancerPolicies",
+                            "elasticloadbalancing:DescribeListenerCertificates",
+                            "elasticloadbalancing:DescribeInstanceHealth",
+                            "elasticloadbalancing:DescribeSSLPolicies",
+                            "elasticloadbalancing:DescribeRules",
+                            "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                            "elasticloadbalancing:DescribeTargetGroupAttributes",
+                            "elasticloadbalancing:DescribeAccountLimits",
+                            "elasticloadbalancing:DescribeTargetHealth",
+                            "elasticloadbalancing:DescribeTargetGroups",
+                            "elasticloadbalancing:DescribeTags"                       
+                        ],
+                        "Resource": [
+                            "*"
+                        ],
+                        "Effect": "Allow"
+                    }
+                  ]
+                }
+            }, { 
+              "PolicyName":"ROSAInstallECRPermissions",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Sid": "VisualEditor0",
+                    "Effect": "Allow",
+                    "Action": [
+                        "ecr:GetDownloadUrlForLayer",
+                        "ecr:BatchGetImage",
+                        "ecr:CompleteLayerUpload",
+                        "ecr:UploadLayerPart",
+                        "ecr:InitiateLayerUpload",
+                        "ecr:BatchCheckLayerAvailability",
+                        "ecr:PutImage"
+                    ],
+                    "Resource":  {"Fn::Sub" :[ "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ROSAECRRepoName}",  { "ROSAECRRepoName": {"Ref":"ROSAInstallContainerECRRepoName"}} ] }
+
+                },
+                {
+                    "Sid": "VisualEditor1",
+                    "Effect": "Allow",
+                    "Action": "ecr:GetAuthorizationToken",
+                    "Resource": "*"
+                }
+              ]}              
+            }, {
+                  "PolicyName":"SecretsManagerReadPolicy",
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "VisualEditor0",
+                            "Effect": "Allow",
+                            "Action": [
+                                "secretsmanager:GetResourcePolicy",
+                                "secretsmanager:GetSecretValue",
+                                "secretsmanager:DescribeSecret",
+                                "secretsmanager:PutSecretValue",
+                                "secretsmanager:CreateSecret",
+                                "secretsmanager:ListSecretVersionIds",
+                                "secretsmanager:UpdateSecret"
+                            ],
+                            "Resource": [
+                              {"Fn::Sub":"arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:ROSA*"},
+                              {"Fn::Sub":"arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*rosa*"}
+                            ]
+                        },
+                        {
+                            "Sid": "VisualEditor1",
+                            "Effect": "Allow",
+                            "Action": [
+                              "secretsmanager:GetRandomPassword",
+                              "secretsmanager:ListSecrets"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }
+            }, {
+                "PolicyName":"HostZonePolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "VisualEditor0",
+                            "Effect": "Allow",
+                            "Action": [
+                                "route53:DeleteVPCAssociationAuthorization",
+                                "route53:DisassociateVPCFromHostedZone",
+                                "route53:GetHostedZone",
+                                "route53:ListVPCAssociationAuthorizations",
+                                "route53:AssociateVPCWithHostedZone",
+                                "route53:CreateVPCAssociationAuthorization"
+                            ],
+                            "Resource": "arn:aws:route53:::hostedzone/*"
+                        },
+                        {
+                            "Sid": "VisualEditor1",
+                            "Effect": "Allow",
+                            "Action": [
+                                "ec2:DescribeVpcs",                                
+                                "route53:ListHostedZones",
+                                "route53:GetHostedZoneCount",
+                                "route53:ListHostedZonesByName"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }                
+            }, {
+                "PolicyName":"EC2VPCPolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "VisualEditor1",
+                            "Effect": "Allow",
+                            "Action": [
+                                "ec2:DescribeVpcs",  
+                                "ec2:DescribeSubnets"                              
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }                
+            }, {
+                "PolicyName":"KMSPolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                              "kms:Decrypt",
+                              "kms:PutKeyPolicy"
+                            ],
+                            "Resource": [
+                                {"Fn::GetAtt":["rRosaClusterKMSKey","Arn"]}
+                            ]  
+                        }                    
+                    ]
+                }                
+            }, {
+                "PolicyName":"STSPolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "VisualEditor0",
+                            "Effect": "Allow",
+                            "Action": "sts:GetCallerIdentity",
+                            "Resource": "*"
+                        }
+                    ]
+                }
+            }
+            ]         
+        }
+      },
+      "rRosaClusterKMSKey": {
+        "Type": "AWS::KMS::Key",
+        "Properties": {
+          "Description": "Encrypt sensitive data for ROSA Managed OpenShift Cluster",
+          "EnableKeyRotation": true,
+          "KeyPolicy": {
+            "Version": "2012-10-17",
+            "Id": "key-default-1",
+            "Statement": { 
+              "Sid": "Allow administration of the key",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"}                ]
+              },
+              "Action": [
+                "kms:Create*",
+                "kms:Describe*",
+                "kms:Enable*",
+                "kms:List*",
+                "kms:Put*",
+                "kms:Update*",
+                "kms:Revoke*",
+                "kms:Disable*",
+                "kms:Get*",
+                "kms:Delete*",
+                "kms:ScheduleKeyDeletion",
+                "kms:CancelKeyDeletion"
+                ],
+              "Resource": ["*"]
+            }
+          }
+        }
+      }, 
+      "rRosaClusterKMSKeyAlias": {
+        "Type": "AWS::KMS::Alias",
+        "Properties": {
+          "AliasName": {"Fn::Sub": "alias/${pRosaKMSKeyAlias}"},
+          "TargetKeyId": {"Ref": "rRosaClusterKMSKey"}
+        }
+      }
+    },
+    "Outputs": {
+        "ROSAInstallContainerRoleARN": {
+            "Value": {"Fn::GetAtt":["ROSAInstallContainerRole","Arn"]},
+            "Description": "The ARN for the ROSA Installation Container Role"
+        },
+        "ROSAInstallKMSKeyARN": {
+            "Value": {"Fn::GetAtt":["rRosaClusterKMSKey","Arn"]},
+            "Description": "The ARN for the ROSA Installation KMS Key"
+        }
+    }
+}  

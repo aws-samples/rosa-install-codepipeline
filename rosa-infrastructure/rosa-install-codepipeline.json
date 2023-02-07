@@ -1,0 +1,1308 @@
+{
+  "Description": "Private AWS ROSA cluster installation and uninstallation Infrastructure-as-Code (IaC) CI/CD pipeline",
+  "Metadata" : {
+    "AdditionalInformation":"The CodePipeline defined here requires two buildspec files in a subfolder to be checked in with the code in the ROSAInstallIaCCodeCommit project and two container image repositories, one for storing amazon/aws-cli image and another for storing a custom built ROSAInstallContainer image"
+  },
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+      "ROSAInstallIaCCodeCommitRepoName": {
+        "Type":"String",
+        "Description":"The project name, also the CodeCommit Repository name where the Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored",
+        "Default":"rosa-install"
+      },"ROSAUnInstallIaCCodeCommitRepoName": {
+        "Type":"String",
+        "Description":"The project name, also the CodeCommit Repository name where the Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored",
+        "Default":"rosa-uninstall"
+      },"ROSABuildSpecCodeCommitRepoName": {
+        "Type":"String",
+        "Description":"The CodeCommit repository name where the CodePipeline buildspecs for Infrastructure as Code (IaC) for ROSA Installation and configuration will be stored",
+        "Default":"rosa-codepipeline-buildspec-scripts"
+      },"ROSAInstallCodeBucket": {
+        "Type":"String",
+        "Description":"The S3 Bucket where initial code for ROSA Installation and configuration CodeCommit repos will be stored",
+        "Default":"rosa-input-196954186242-us-east-2"
+      },"ROSAInstallContainerECRRepoName": {
+        "Type": "String",
+        "Description" : "Name of the ECR repository where the ROSA Install Container image will reside. must be lowercase.",
+        "Default":"rosa-install"
+      },"AWSCliLocalECRRepoName": {
+        "Type": "String",
+        "Description" : "Name of the ECR repository where the aws-cli base image local copy must exist, copy pulled from docker hub. must be lowercase.",
+        "Default":"amazon/aws-cli"
+      },"ROSAVPC": {
+        "Type": "String",
+        "Description" : "ID of private VPC in which the ROSA cluster should be created",
+        "Default":"vpc-xxxxxxxxxxxxxxxxx"
+      },"CodePipelineVPC": {
+        "Type": "String",
+        "Description" : "ID of private VPC in which CodePipeline should have access to, in order to reach services created in different private VPCs connected by TGW",
+        "Default":"vpc-xxxxxxxxxxxxxxxxx"
+      },"CodePipelineSubnets": {
+        "Type": "CommaDelimitedList",
+        "Description" : "comma separate list of subnets in private VPC",
+        "Default":"subnet-xxxxxxxxxxxxxxxxx, subnet-xxxxxxxxxxxxxxxxx"
+      },"CodePipelineVPCRouteTables": {
+        "Type": "CommaDelimitedList",
+        "Description" : "comma separate list of route tables for the subnets in private VPC for CodePipeline",
+        "Default":"rtb-xxxxxxxxxxxxxxxxx, rtb-xxxxxxxxxxxxxxxxx"
+      },"pRosaKMSKey": {
+        "Type": "String",
+        "Description": "ARN for the ROSA Installation KMS Key"
+      },"pRosaCodeBuildKMSKeyAlias": {
+        "Type": "String",
+        "Default": "rosa-codebuild-kms-key",
+        "Description": "Name for customer managed KMS key for ROSA installation"
+      },"pRosaInstallContainerRoleArn": {
+        "Type": "String",
+        "Description": "ARN for the ROSA Installation Container Role"
+      },"pRosaInstallCodeBuildRoleName": {
+        "Type": "String",
+        "Description": "ROSA Installation CodeBuild Role Name"
+      }, "pRosaInstallrEc2InstanceRoleName": {
+        "Type": "String",
+        "Description": "ROSA Installation SSM connected EC2 Instance Role Name"
+      }, "pRosaToken": {
+        "Type": "String",
+        "NoEcho" : "true",
+        "Description": "ROSA Token"
+      }, "pCreateRosaTokenSecret" : {
+        "AllowedValues" : [ "true", "false"],
+        "Default" : "true",
+        "Type": "String",
+        "Description" : "If true then create ROSA_TOKEN secret in SecretsManager"
+      }     
+  },
+  "Conditions": {
+    "cEnableRosaTokenSecret" : {"Fn::Equals" : [ {"Ref": "pCreateRosaTokenSecret"}, "true"]}
+  },
+  "Mappings" : {
+    "RegionMap" : {
+      "us-east-2" : {
+        "PrefixListS3" : "pl-7ba54012"
+      },
+      "us-east-1" : {
+        "PrefixListS3" : "pl-63a5400a"
+      },
+      "us-west-1" : {
+        "PrefixListS3" : "pl-6ba54002"
+      },
+      "us-west-2" : {
+        "PrefixListS3" : "pl-68a54001"
+      },
+      "ap-northeast-1" : {
+        "PrefixListS3" : "pl-61a54008"
+      },
+      "ap-northeast-2" : {
+        "PrefixListS3" : "pl-78a54011"
+      },
+      "ap-northeast-3" : {
+        "PrefixListS3" : "pl-a4a540cd"
+      },
+      "ap-south-1" : {
+        "PrefixListS3" : "pl-78a54011"
+      },
+      "ap-southeast-1" : {
+        "PrefixListS3" : "pl-6fa54006"
+      },
+      "ap-southeast-2" : {
+        "PrefixListS3" : "pl-6ca54005"
+      },
+      "ca-central-1" : {
+        "PrefixListS3" : "pl-7da54014"
+      },
+      "eu-central-1" : {
+        "PrefixListS3" : "pl-6ea54007"
+      },
+      "eu-north-1" : {
+        "PrefixListS3" : "pl-c3aa4faa"
+      },
+      "eu-west-1" : {
+        "PrefixListS3" : "pl-6da54004"
+      },
+      "eu-west-2" : {
+        "PrefixListS3" : "pl-7ca54015"
+      },
+      "eu-west-3" : {
+        "PrefixListS3" : "pl-23ad484a"
+      },
+      "sa-east-1" : {
+        "PrefixListS3" : "pl-6aa54003"
+      }
+    }
+  },
+  "Resources": {
+      "PipelineArtifacts": {
+          "Type": "AWS::S3::Bucket",
+          "DeletionPolicy": "Retain",
+          "UpdateReplacePolicy" : "Retain",
+          "Properties": {
+            "LoggingConfiguration": {
+              "DestinationBucketName": {"Ref":"PipelineArtifactsAccessLogs"},
+              "LogFilePrefix": {"Fn::Sub":"s3-logs/AWSLogs/${AWS::AccountId}/pipeline-artifacts"}
+            },
+            "VersioningConfiguration": {
+              "Status": "Enabled" 
+            },          
+            "PublicAccessBlockConfiguration": {
+              "BlockPublicAcls": "true",
+              "BlockPublicPolicy": "true",
+              "IgnorePublicAcls": "true",
+              "RestrictPublicBuckets": "true"   
+            },
+            "AccessControl": "Private",
+            "BucketEncryption": {
+                "ServerSideEncryptionConfiguration": [
+                    {
+                      "BucketKeyEnabled": "true",
+                      "ServerSideEncryptionByDefault": {
+                        "KMSMasterKeyID": {"Fn::GetAtt":["rRosaCodeBuildKMSKey","Arn"]},
+                          "SSEAlgorithm": "aws:kms"
+                      }
+                    }
+                ]
+            }
+          }
+      },
+      "PipelineArtifactsAccessLogs": {
+        "Type": "AWS::S3::Bucket",
+        "Metadata": {
+          "checkov": {
+            "skip": [
+              {
+                "id": "CKV_AWS_18",
+                "comment": "Access logs not needed for S3 bucket holding access logs"
+              }
+            ]
+          }
+        },
+        "DeletionPolicy": "Retain",
+        "UpdateReplacePolicy" : "Retain",
+        "Properties": {           
+          "BucketEncryption": {
+            "ServerSideEncryptionConfiguration": [
+                { 
+                    "ServerSideEncryptionByDefault": {
+                        "SSEAlgorithm": "AES256"
+                    }
+                }
+            ]
+          },
+          "VersioningConfiguration": {
+            "Status": "Enabled" 
+          },          
+          "PublicAccessBlockConfiguration": {
+            "BlockPublicAcls": "true",
+            "BlockPublicPolicy": "true",
+            "IgnorePublicAcls": "true",
+            "RestrictPublicBuckets": "true"   
+          },
+          "AccessControl": "LogDeliveryWrite"
+        }
+      },
+      "ROSAInstallIaCCodeCommitRepo": {
+        "Type" : "AWS::CodeCommit::Repository",
+        "Properties" : {
+          "RepositoryDescription" : "Repository for Private ROSA cluster installation Infrastructure-as-Code (IaC) CI/CD pipeline",
+          "RepositoryName" : {"Ref":"ROSAInstallIaCCodeCommitRepoName"},
+          "Code": {
+            "BranchName": "main",
+            "S3": {
+                "Bucket": {
+                    "Ref": "ROSAInstallCodeBucket"
+                },
+                "Key": {
+                  "Fn::Sub":["${ROSAInstallRepoName}.zip", { "ROSAInstallRepoName": {"Ref":"ROSAInstallIaCCodeCommitRepoName"}} ] 
+                }
+              }
+          },
+          "Triggers" : [ ]
+        }
+      },
+      "ROSAUnInstallIaCCodeCommitRepo": {
+        "Type" : "AWS::CodeCommit::Repository",
+        "Properties" : {
+          "RepositoryDescription" : "Repository for Private ROSA cluster uninstallation Infrastructure-as-Code (IaC) CI/CD pipeline",
+          "RepositoryName" : {"Ref":"ROSAUnInstallIaCCodeCommitRepoName"},
+          "Code": {
+            "BranchName": "main",
+            "S3": {
+                "Bucket": {
+                    "Ref": "ROSAInstallCodeBucket"
+                },
+                "Key": {
+                  "Fn::Sub":["${ROSAUnInstallRepoName}.zip", { "ROSAUnInstallRepoName": {"Ref":"ROSAUnInstallIaCCodeCommitRepoName"}} ] 
+                }
+            }
+          },
+          "Triggers" : [ ]
+        }
+      },
+      "ROSACodePipelineBuildSpecsRepo": {
+        "Type" : "AWS::CodeCommit::Repository",
+        "Properties" : {
+          "RepositoryDescription" : "Repository for CodePipeline Buildspecs ROSA Infrastructure-as-Code (IaC) CI/CD pipeline",
+          "RepositoryName" : {"Ref":"ROSABuildSpecCodeCommitRepoName"},
+          "Code": {
+            "BranchName": "main",
+            "S3": {
+                "Bucket": {
+                    "Ref": "ROSAInstallCodeBucket"
+                },
+                "Key": {
+                  "Fn::Sub":["${ROSABuildSpecRepoName}.zip", { "ROSABuildSpecRepoName": {"Ref":"ROSABuildSpecCodeCommitRepoName"}} ] 
+                }
+            }
+          },
+          "Triggers" : [ ]
+        }
+      },
+      "AWSCliLocalECRRepo" : {
+        "Type": "AWS::ECR::Repository",
+        "Properties": {
+            "RepositoryName": {"Ref":"AWSCliLocalECRRepoName"}, 
+            "ImageTagMutability": "IMMUTABLE",       
+            "ImageScanningConfiguration" : {
+              "ScanOnPush": true
+            },
+            "EncryptionConfiguration": {
+              "EncryptionType": "KMS",
+              "KmsKey": {"Ref": "rRosaCodeBuildKMSAlias"} 
+            }              
+          }
+      },
+      "ROSAInstallContainerECRRepo" : {
+          "Type": "AWS::ECR::Repository",
+          "Properties": {
+            "RepositoryName": {"Ref":"ROSAInstallContainerECRRepoName"}, 
+            "ImageTagMutability": "IMMUTABLE",        
+            "ImageScanningConfiguration" : {
+              "ScanOnPush": true
+            },
+            "EncryptionConfiguration": {
+              "EncryptionType": "KMS",
+              "KmsKey": {"Ref": "rRosaCodeBuildKMSAlias"} 
+            }         
+          }
+      },
+      "CodePipelineSecurityGroup" : {
+        "Type" : "AWS::EC2::SecurityGroup",
+        "Properties" : {
+          "VpcId" : { "Ref" : "CodePipelineVPC" },
+          "GroupDescription" : "Enable httS access for the ROSA CodePipeline Codebuild Jobs from the CodePipeline VPC",
+          "SecurityGroupIngress" : [ 
+            { "Description": "allow inbound HTTPS from within the VPCs", "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "CidrIp" : "10.0.0.0/8" } 
+          ],
+          "SecurityGroupEgress" : [ 
+            { "Description": "allow outbound on port 6443 for Openshift API within the VPCs", "IpProtocol" : "tcp", "FromPort" : "6443", "ToPort" : "6443", "CidrIp" : "10.0.0.0/8" },
+            { "Description": "allow outbound on port 443 for Openshift API within the VPCs", "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "CidrIp" : "10.0.0.0/8" }, 
+            { "Description": "allow outbound on port 443 for Openshift API within the VPCs", "IpProtocol" : "tcp", "FromPort" : "443", "ToPort" : "443", "DestinationPrefixListId" : 
+                {"Fn::FindInMap":["RegionMap", { "Ref" : "AWS::Region" }, "PrefixListS3"]}}
+          ]
+        }
+      },
+      "rRosaCodeBuildKMSKey": {
+        "Type": "AWS::KMS::Key",
+        "Properties": {
+            "Description": "Used by CodeBuild Roles in to Encrypt/Decrypt codebuild artifacts",
+            "EnableKeyRotation": true,
+            "KeyPolicy": {
+                "Version": "2012-10-17",
+                "Id": "CodeBuild-KMS-Key",
+                "Statement": [
+                    {
+                        "Sid": "Allows admin of the key",
+                        "Effect": "Allow",
+                        "Principal": {
+                          "AWS": {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:root"}
+                        },
+                        "Action": [
+                            "kms:Create*",
+                            "kms:Describe*",
+                            "kms:Enable*",
+                            "kms:List*",
+                            "kms:Put*",
+                            "kms:Update*",
+                            "kms:Revoke*",
+                            "kms:Disable*",
+                            "kms:Get*",
+                            "kms:Delete*",
+                            "kms:ScheduleKeyDeletion",
+                            "kms:CancelKeyDeletion",
+                            "kms:RetireGrant"
+                        ],
+                        "Resource": "*"
+                    },
+                    {
+                        "Sid": "Allow use of the key",
+                        "Effect": "Allow",
+                        "Principal": {
+                            "AWS": [
+                              {"Fn::Sub":"arn:aws:iam::${AWS::AccountId}:root"},
+                              {"Fn::Sub":["arn:aws:iam::${AWS::AccountId}:role/${CodeBuildRole}", {"CodeBuildRole":{"Ref":"pRosaInstallCodeBuildRoleName"}}]} 
+                            ]
+                        },
+                        "Action": [
+                            "kms:Encrypt",
+                            "kms:Decrypt",
+                            "kms:ReEncrypt*",
+                            "kms:GenerateDataKey*",
+                            "kms:DescribeKey",
+                            "kms:CreateGrant",
+                            "kms:RetireGrant"
+                        ],
+                        "Resource": "*"
+                    }
+                ]
+            }
+        }
+      },
+      "rRosaCodeBuildKMSAlias": {
+        "Type": "AWS::KMS::Alias",
+        "Properties": {
+            "AliasName": {"Fn::Sub": "alias/${pRosaCodeBuildKMSKeyAlias}"},
+            "TargetKeyId": {"Ref": "rRosaCodeBuildKMSKey"}
+        }
+      }, 
+      "rManageS3ArtifactsPolicy":{    
+        "Type": "AWS::IAM::Policy",
+        "Properties": { 
+          "PolicyName":"CodeBuildManageS3Artifacts",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": [
+                          "s3:GetBucketPolicy",
+                          "s3:GetBucketPolicyStatus",
+                          "s3:GetBucketLocation",
+                          "s3:GetObject",
+                          "s3:PutObject",
+                          "s3:ListBucket"
+              ],
+              "Resource": [
+                {"Fn::GetAtt":["PipelineArtifacts", "Arn"]},
+                {"Fn::Sub" : ["${bucketarn}/*", {"bucketarn": { "Fn::GetAtt": ["PipelineArtifacts", "Arn"]}}] }                                    
+              ]
+              },{
+                "Effect": "Allow",
+                "Action": [
+                  "kms:Decrypt"
+                ],
+                "Resource": [
+                  {"Fn::GetAtt":["rRosaCodeBuildKMSKey","Arn"]}
+                ]  
+              },{
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource": [
+                  {"Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"}                                    
+              ]
+              }
+          ]},
+          "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+        }    
+      },
+      "rCodeCommitPolicy":{    
+        "Type": "AWS::IAM::Policy",
+        "Properties": { 
+            "PolicyName":"codebuild-codecommit",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "codecommit:CreateBranch",
+                  "codecommit:PutCommentReaction",
+                  "codecommit:DeleteCommentContent",
+                  "codecommit:BatchAssociateApprovalRuleTemplateWithRepositories",
+                  "codecommit:CreateRepository",
+                  "codecommit:UpdatePullRequestApprovalRuleContent",
+                  "codecommit:PutFile",
+                  "codecommit:CreateCommit",
+                  "codecommit:UpdatePullRequestTitle",
+                  "codecommit:DeletePullRequestApprovalRule",
+                  "codecommit:GetCommit",
+                  "codecommit:OverridePullRequestApprovalRules",
+                  "codecommit:UpdateComment",
+                  "codecommit:MergePullRequestByThreeWay",
+                  "codecommit:UpdateRepositoryDescription",
+                  "codecommit:TestRepositoryTriggers",
+                  "codecommit:UpdatePullRequestStatus",
+                  "codecommit:CreatePullRequest",
+                  "codecommit:CreatePullRequestApprovalRule",
+                  "codecommit:UpdateDefaultBranch",
+                  "codecommit:UpdatePullRequestApprovalState",
+                  "codecommit:PutRepositoryTriggers",
+                  "codecommit:UploadArchive",
+                  "codecommit:MergeBranchesBySquash",
+                  "codecommit:PostCommentForPullRequest",
+                  "codecommit:UpdatePullRequestDescription",
+                  "codecommit:GitPull",
+                  "codecommit:DeleteRepository",
+                  "codecommit:BatchDisassociateApprovalRuleTemplateFromRepositories",
+                  "codecommit:CancelUploadArchive",
+                  "codecommit:PostCommentReply",
+                  "codecommit:MergeBranchesByFastForward",
+                  "codecommit:CreateUnreferencedMergeCommit",
+                  "codecommit:GetUploadArchiveStatus",
+                  "codecommit:MergePullRequestBySquash",
+                  "codecommit:GetRepository",
+                  "codecommit:UpdateRepositoryName",
+                  "codecommit:MergeBranchesByThreeWay",
+                  "codecommit:GetBranch",
+                  "codecommit:DisassociateApprovalRuleTemplateFromRepository",
+                  "codecommit:MergePullRequestByFastForward",
+                  "codecommit:PostCommentForComparedCommit",
+                  "codecommit:DeleteFile",
+                  "codecommit:GitPush",
+                  "codecommit:AssociateApprovalRuleTemplateWithRepository",
+                  "codecommit:DeleteBranch"
+                ],
+                "Resource": [
+                  {"Fn::GetAtt": ["ROSAInstallIaCCodeCommitRepo","Arn"]}, 
+                  {"Fn::GetAtt": ["ROSAUnInstallIaCCodeCommitRepo","Arn"]},
+                  {"Fn::GetAtt": ["ROSACodePipelineBuildSpecsRepo","Arn"]}  ]
+              }]
+            },
+            "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}]     
+          }
+      },
+      "rCodeBuildManageECRPolicy":{    
+        "Type": "AWS::IAM::Policy",
+        "Properties": {
+          "PolicyName":"CodeBuildManageECR",
+          "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [                            
+                  {
+                    "Action": [
+                      "ecr:DescribeImages",
+                      "ecr:BatchGetImage",
+                      "ecr:BatchCheckLayerAvailability",
+                      "ecr:CompleteLayerUpload",
+                      "ecr:GetDownloadUrlForLayer",
+                      "ecr:InitiateLayerUpload",
+                      "ecr:PutImage",
+                      "ecr:UploadLayerPart",
+                      "ecr:BatchDeleteImage"
+                    ],
+                    "Resource": [
+                      {"Fn::Sub" : "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/amazon/*" },
+                      {"Fn::Sub" :[ "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ROSAECRRepoName}", { "ROSAECRRepoName": {"Ref":"ROSAInstallContainerECRRepoName"}} ] }
+                   ],
+                    "Effect": "Allow"
+                  },
+                  {
+                    "Action": [
+                      "ecr:GetAuthorizationToken"
+                    ],
+                    "Resource": "*",
+                    "Effect": "Allow"
+                  }
+              ]
+          },
+          "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+        }
+      },
+      "rSecretsManagerReadPolicy": {
+        "Type": "AWS::IAM::Policy",
+        "Properties": {
+          "PolicyName":"SecretsManagerPolicy",
+          "PolicyDocument":       {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "VisualEditor0",
+                    "Effect": "Allow",
+                    "Action": [
+                      "secretsmanager:GetResourcePolicy",
+                      "secretsmanager:GetSecretValue",
+                      "secretsmanager:DescribeSecret",
+                      "secretsmanager:PutSecretValue",
+                      "secretsmanager:CreateSecret",
+                      "secretsmanager:ListSecretVersionIds",
+                      "secretsmanager:UpdateSecret"
+                    ],
+                    "Resource": [
+                      {"Fn::Sub":"arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:ROSA*"},
+                      {"Fn::Sub":"arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*rosa*"}
+                    ]
+                },
+                {
+                    "Sid": "VisualEditor1",
+                    "Effect": "Allow",
+                    "Action": [
+                      "secretsmanager:GetRandomPassword",
+                      "secretsmanager:ListSecrets"
+                    ],
+                    "Resource": "*"
+                }
+            ]
+        },
+        "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+      }
+      },
+      "rRoute53AssociateVPCPolicy":{
+        "Type": "AWS::IAM::Policy",
+        "Properties": {
+          "PolicyName":"Route53AssociateVPC",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "VisualEditor0",
+                  "Effect": "Allow",
+                  "Action": [
+                      "route53:DisassociateVPCFromHostedZone",
+                      "route53:AssociateVPCWithHostedZone"
+                  ],
+                  "Resource": "arn:aws:route53:::hostedzone/*"
+                },
+                {
+                  "Sid": "VisualEditor1",
+                  "Effect": "Allow",
+                  "Action": [
+                      "route53:ListHostedZonesByVPC",
+                      "route53:ListHostedZones",
+                      "route53:ListHostedZonesByName"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+          },
+          "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"},{"Ref": "pRosaInstallrEc2InstanceRoleName"}] 
+        }
+      },
+      "rEC2AuthorizeEgressPolicy": {
+        "Type": "AWS::IAM::Policy",
+        "Properties": {
+          "PolicyName":"EC2AuthEgress",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "VisualEditor0",
+                  "Effect": "Allow",
+                  "Action": [
+                      "ec2:AuthorizeSecurityGroupEgress",
+                      "ec2:RevokeSecurityGroupEgress"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join":["",
+                        ["arn:aws:ec2:",
+                        {"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},
+                        ":security-group/",
+                        {"Fn::GetAtt":["CodePipelineSecurityGroup", "GroupId"]}]]
+                    }
+                  ]
+                }
+              ]
+            },
+          "Roles": [{"Ref": "pRosaInstallCodeBuildRoleName"}] 
+        }
+      },
+      "CodePipelineArtifactsRole":{
+          "Type":"AWS::IAM::Role",
+          "Properties":{
+              "Description":"CodePipelie role for moving objects through the build and deploy stages.",
+              "AssumeRolePolicyDocument": {
+                  "Version":"2012-10-17",
+                  "Statement":{
+                      "Effect":"Allow",
+                      "Principal":{
+                          "Service":"codepipeline.amazonaws.com"
+                      },
+                      "Action":"sts:AssumeRole"
+                  }
+              },
+              "Policies": [ { 
+                  "PolicyName":"CodePipelineManageS3Artifacts",
+                  "PolicyDocument": {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                          {
+                              "Effect": "Allow",
+                              "Action": [
+                                  "s3:GetObject",
+                                  "s3:GetObjectVersion",
+                                  "s3:GetBucketVersioning",
+                                  "s3:PutObject"
+                              ],
+                              "Resource": [
+                                  {"Fn::GetAtt":["PipelineArtifacts", "Arn"]},
+                                  {"Fn::Sub" : ["${bucketarn}/*", {"bucketarn": { "Fn::GetAtt": ["PipelineArtifacts", "Arn"]}}] }
+                              ]
+                          }
+                      ]
+                  }
+                  },{ 
+                  "PolicyName":"codepipeline-codecommit",
+                  "PolicyDocument": {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Action": [
+                            "codecommit:GitPull",
+                            "codecommit:GetRepository",
+                            "codecommit:GetBranch",
+                            "codecommit:GetCommit",
+                            "codecommit:UploadArchive",
+                            "codecommit:GetUploadArchiveStatus",
+                            "codecommit:CancelUploadArchive"
+                        ],
+                        "Resource": [{"Fn::GetAtt": ["ROSAInstallIaCCodeCommitRepo","Arn"]},{"Fn::GetAtt": ["ROSAInstallIaCCodeCommitRepo","Arn"]}, {"Fn::GetAtt": ["ROSAUnInstallIaCCodeCommitRepo","Arn"]},{"Fn::GetAtt": ["ROSAUnInstallIaCCodeCommitRepo","Arn"]}  ]
+                      },{
+                        "Effect":"Allow",
+                        "Action":[
+                          "codebuild:StartBuild",
+                          "codebuild:StartBuild",
+                          "codebuild:StopBuild",
+                          "codebuild:BatchGetProjects",
+                          "codebuild:BatchGetBuilds",
+                          "codebuild:ListBuildsForProject"                                
+                        ],
+                        "Resource":[
+                          {"Fn::Sub":["arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${cbproj}", {"cbproj": {"Ref":"ProjDeployContainer"}} ]},
+                          {"Fn::Sub":["arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${cbproj}", {"cbproj": {"Ref":"ProjCreateROSACluster"}} ]}
+                        ]                              
+                      },{
+                        "Effect":"Allow",
+                        "Action":[
+                          "codebuild:ListBuilds",
+                          "codebuild:ListProjects",
+                          "codebuild:ListCuratedEnvironmentImages",
+                          "codebuild:ListSourceCredentials"
+                        ],
+                        "Resource":"*"
+                      }
+                    ]
+                  }                    
+                }
+              ]
+          }            
+      },            
+      "ProjDeployContainer" : {
+          "Type": "AWS::CodeBuild::Project",
+          "Properties": {
+            "Name": "DeployToECR",
+            "Description": "push the container to ECR.",
+            "ServiceRole": {"Ref": "pRosaInstallCodeBuildRoleName"},
+            "Artifacts": {
+              "Type": "CODEPIPELINE"
+            },
+            "EncryptionKey" : {"Fn::GetAtt": ["rRosaCodeBuildKMSKey","Arn"]},
+            "Environment": {
+              "Type": "LINUX_CONTAINER",
+              "ComputeType": "BUILD_GENERAL1_SMALL",
+              "Image": "aws/codebuild/amazonlinux2-x86_64-standard:3.0",
+              "EnvironmentVariables":[
+                    {
+                      "Name": "AWS_DEFAULT_REGION",
+                      "Value": {"Fn::Sub":"${AWS::Region}" },
+                      "Type": "PLAINTEXT"
+                    },
+                    {
+                      "Name": "AWS_ECR_ACCOUNT_ID",
+                      "Value": {"Fn::Sub": "${AWS::AccountId}"},
+                      "Type": "PLAINTEXT"
+                    },
+                    {
+                      "Name": "IMAGE_REPO_NAME",
+                      "Value": {"Ref":"ROSAInstallContainerECRRepoName"},
+                      "Type": "PLAINTEXT"
+                    },
+                    {
+                      "Name": "IMAGE_TAG_LATEST",
+                      "Value": "latest",
+                      "Type": "PLAINTEXT"
+                    },
+                    {
+                      "Name": "AWS_CLI_LOCAL_IMG",
+                      "Value":  {"Ref":"AWSCliLocalECRRepoName"},
+                      "Type": "PLAINTEXT"
+                    },
+                    {
+                      "Name": "AWS_CODEPIPELINE_SECURITY_GROUP_ID",
+                      "Value": { "Fn::GetAtt": ["CodePipelineSecurityGroup","GroupId"] },
+                      "Type": "PLAINTEXT"
+                    } 
+              ],
+              "PrivilegedMode": true
+            }, "VpcConfig" : {
+              "SecurityGroupIds" : [ {"Ref":"CodePipelineSecurityGroup"}],
+              "Subnets" : {"Ref":"CodePipelineSubnets"} ,
+              "VpcId" : {"Ref":"CodePipelineVPC"}
+            },
+            "Source": {
+              "Type": "CODEPIPELINE",
+              "BuildSpec":"codepipeline/buildspec-deploy-rosa-image.yml"
+            },
+            "TimeoutInMinutes": 30
+          }            
+      },           
+      "ProjCreateROSACluster" : {
+        "Type": "AWS::CodeBuild::Project",
+        "Properties": {
+          "Name": "Run_ROSA_Install_Container",
+          "Description": "This CodeBuild Project runs the ROSA Installation Container passing a specific rosa_param.env file and a rosa_install.sh function as parameters. This project is invoked from both the ROSA Installation and ROSA Uninstallation pipelines",
+          "ServiceRole": {"Ref": "pRosaInstallCodeBuildRoleName"},
+          "Artifacts": {
+            "Type": "CODEPIPELINE"
+          },
+          "EncryptionKey" : {"Fn::GetAtt": ["rRosaCodeBuildKMSKey","Arn"]},
+          "Environment": {
+            "Type": "LINUX_CONTAINER",
+            "ComputeType": "BUILD_GENERAL1_SMALL",
+            "Image": "aws/codebuild/amazonlinux2-x86_64-standard:3.0",
+            "PrivilegedMode": true,
+            "EnvironmentVariables":[
+              {
+                "Name":  "PROJECTNAME",
+                "Value": {"Ref":"ROSAInstallIaCCodeCommitRepoName"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "ARTIFACT_BUCKET",
+                "Value": {"Ref":"PipelineArtifacts"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_DEFAULT_REGION",
+                "Value": {"Fn::Sub":"${AWS::Region}" },
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "ROSA_CLUSTER_REGION",
+                "Value":  {"Fn::Sub":"${AWS::Region}" },
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_ECR_ACCOUNT_ID",
+                "Value": {"Fn::Sub": "${AWS::AccountId}"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_ROSA_ACCOUNT_ID",
+                "Value": {"Fn::Sub": "${AWS::AccountId}"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "IMAGE_REPO_NAME",
+                "Value": {"Ref":"ROSAInstallContainerECRRepoName"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "IMAGE_TAG_LATEST",
+                "Value": "latest",
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "ROSA_INSTALL_ACTION",
+                "Value": "wait_for_cluster_ready",
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_SHARED_SERVICES_VPC_ID",
+                "Value":  {"Ref":"CodePipelineVPC"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_ACCOUNT_ROSA_VPC_ID",
+                "Value":  {"Ref":"ROSAVPC"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "ROSA_INSTALL_CONTAINER_ROLE_ARN",
+                "Value":  {"Ref": "pRosaInstallContainerRoleArn"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "ROSA_CLUSTER_KMS_KEY_ARN",
+                "Value":  {"Ref": "pRosaKMSKey"},
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_ACM_PRIVATE_CA_ARN",
+                "Value": "null",
+                "Type": "PLAINTEXT"
+              },{
+                "Name": "AWS_CODEPIPELINE_SECURITY_GROUP_ID",
+                "Value": { "Fn::GetAtt": ["CodePipelineSecurityGroup","GroupId"] },
+                "Type": "PLAINTEXT"
+              }              
+            ]
+          }, 
+          "VpcConfig" : {
+            "SecurityGroupIds" : [ {"Ref":"CodePipelineSecurityGroup"}],
+            "Subnets" : {"Ref":"CodePipelineSubnets"} ,
+            "VpcId" : {"Ref":"CodePipelineVPC"}
+          },
+          "Source": {
+            "Type": "CODEPIPELINE",
+            "BuildSpec":"codepipeline/buildspec-deploy-rosa-cluster.yml"
+          },
+          "SecondarySources": [
+            { 
+              "Type": "CODECOMMIT",
+              "SourceIdentifier": "buildspecScripts",
+              "Location" : {"Fn::GetAtt": ["ROSACodePipelineBuildSpecsRepo","CloneUrlHttp"]}
+            }
+          ],
+          "TimeoutInMinutes": 120
+        }            
+      },      
+      "ROSAInstallPipeline" :{
+        "Type" : "AWS::CodePipeline::Pipeline",          
+        "Properties" : {
+          "ArtifactStore" :{
+              "Type": "S3",
+              "Location":{"Ref":"PipelineArtifacts"}
+          },
+          "Name" : "ROSA-Install-Pipeline",
+          "RoleArn" : {"Fn::GetAtt":["CodePipelineArtifactsRole","Arn"]},
+          "Stages" : [ 
+              {
+                  "Name": "SourceStageCodeCommit",
+                  "Actions": [
+                      {                          
+                        "Name":"Source",
+                        "Namespace":"SourceVariables",
+                        "ActionTypeId": {
+                            "Category": "Source",
+                            "Owner": "AWS",
+                            "Version": "1",
+                            "Provider": "CodeCommit"
+                        },
+                        "Configuration": {
+                            "RepositoryName":{"Fn::GetAtt":["ROSAInstallIaCCodeCommitRepo","Name"]},
+                            "BranchName":"main",
+                            "OutputArtifactFormat":"CODEBUILD_CLONE_REF",
+                            "PollForSourceChanges": false
+                          },
+                        "OutputArtifacts":[
+                            {
+                              "Name":"SourceArtifacts"
+                            }
+                        ]
+                      }
+                  ]
+              },{
+                "Name": "CreateClusterApprovalStage",
+                "Actions": [
+                    {
+                        "Name": "Create-Cluster-Approval",
+                        "ActionTypeId": {
+                            "Category": "Approval",
+                            "Owner": "AWS",
+                            "Version": "1",
+                            "Provider": "Manual"
+                        },
+                        "InputArtifacts": [],
+                        "OutputArtifacts": [],
+                        "Configuration": {
+                            "ExternalEntityLink": { "Fn::Sub":["https://console.aws.amazon.com/codesuite/codecommit/repositories/rosa-install/commit/${CommitId}?region=${AWS::Region}", { "CommitId": "#{SourceVariables.CommitId}"}]},
+                            "CustomData": {"Fn::Sub": "Please review the ROSA cluster to INSTALL and approve this change for account: ${AWS::AccountId}. Commit message: #{SourceVariables.CommitMessage}"}
+                        },
+                        "RunOrder": 1
+                    }
+                ]
+              },{
+                  "Name": "DeployImage",
+                  "Actions": [{
+                    "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                    "Name":"TagContainer-latest",
+                    "ActionTypeId": {
+                        "Category": "Build",
+                        "Owner": "AWS",
+                        "Version": "1",
+                        "Provider": "CodeBuild"
+                    },
+                    "Configuration": {
+                        "ProjectName":{"Ref":"ProjDeployContainer"}
+                    }
+                  }]
+              },{
+                  "Name": "CreateROSACluster",
+                  "Actions": [{
+                    "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                    "Name":"Create-ROSA-Cluster",
+                    "ActionTypeId": {
+                        "Category": "Build",
+                        "Owner": "AWS",
+                        "Version": "1",
+                        "Provider": "CodeBuild"
+                    },
+                    "Configuration": {
+                        "ProjectName":{"Ref":"ProjCreateROSACluster"},
+                        "EnvironmentVariables": {"Fn::Sub":["[{\"name\":\"Execution_ID\",\"value\":\"#{codepipeline.PipelineExecutionId}\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_ACTION\",\"value\":\"create_cluster\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_CONTAINER_ROLE_ARN\",\"value\":\"${ROSAInstallContainerRole}\",\"type\":\"PLAINTEXT\"}]",{ "ROSAInstallContainerRole": {"Ref": "pRosaInstallContainerRoleArn"}} ]}
+                        }
+                  }]
+              },{
+                  "Name": "WaitForROSAClusterToBeReady",
+                  "Actions": [{
+                    "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                    "Name":"Create-ROSA-Cluster",
+                    "Namespace":"ROSAClusterVariables",
+                    "ActionTypeId": {
+                        "Category": "Build",
+                        "Owner": "AWS",
+                        "Version": "1",
+                        "Provider": "CodeBuild"
+                    },
+                    "Configuration": {
+                        "ProjectName":{"Ref":"ProjCreateROSACluster"},
+                        "EnvironmentVariables": "[{\"name\":\"Execution_ID\",\"value\":\"#{codepipeline.PipelineExecutionId}\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_ACTION\",\"value\":\"wait_for_cluster_ready\",\"type\":\"PLAINTEXT\"}]"
+                        },
+                    "OutputArtifacts":[
+                        {
+                          "Name":"rosa-cluster-ready-output"
+                        }
+                    ]
+                  }]
+              },{
+                  "Name": "CreateClusterAdmin",
+                  "Actions": [{
+                    "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                    "Name":"Create-Cluster-Admin",
+                    "ActionTypeId": {
+                        "Category": "Build",
+                        "Owner": "AWS",
+                        "Version": "1",
+                        "Provider": "CodeBuild"
+                    },
+                    "Configuration": {
+                        "ProjectName":{"Ref":"ProjCreateROSACluster"},
+                        "EnvironmentVariables": "[{\"name\":\"Execution_ID\",\"value\":\"#{codepipeline.PipelineExecutionId}\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_ACTION\",\"value\":\"create_cluster_admin_login\",\"type\":\"PLAINTEXT\"}]"
+                    }
+                  }]
+              }
+            ]
+          }
+      },        
+      "ROSAUnInstallPipeline" :{
+          "Type" : "AWS::CodePipeline::Pipeline",          
+          "Properties" : {
+            "ArtifactStore" :{
+                "Type": "S3",
+                "Location":{"Ref":"PipelineArtifacts"}
+            },
+            "Name" : "ROSA-Delete-Pipeline",
+            "RoleArn" : {"Fn::GetAtt":["CodePipelineArtifactsRole","Arn"]},
+            "Stages" : [ 
+              {
+                "Name": "SourceStageCodeCommit",
+                "Actions": [
+                    {                          
+                      "Name":"Source",
+                      "Namespace":"SourceVariables",
+                      "ActionTypeId": {
+                          "Category": "Source",
+                          "Owner": "AWS",
+                          "Version": "1",
+                          "Provider": "CodeCommit"
+                      },
+                      "Configuration": {
+                          "RepositoryName":{"Fn::GetAtt":["ROSAUnInstallIaCCodeCommitRepo","Name"]},
+                          "BranchName":"main",
+                          "OutputArtifactFormat":"CODEBUILD_CLONE_REF",
+                          "PollForSourceChanges": false
+                      },
+                      "OutputArtifacts":[
+                          {
+                            "Name":"SourceArtifacts"
+                          }
+                      ]
+                    }
+                ]
+              },{
+                "Name": "DeleteClusterApprovalStage",
+                "Actions": [
+                    {
+                        "Name": "Delete-Cluster-Approval",
+                        "ActionTypeId": {
+                            "Category": "Approval",
+                            "Owner": "AWS",
+                            "Version": "1",
+                            "Provider": "Manual"
+                        },
+                        "InputArtifacts": [],
+                        "OutputArtifacts": [],
+                        "Configuration": {
+                            "ExternalEntityLink": { "Fn::Sub":["https://console.aws.amazon.com/codesuite/codecommit/repositories/rosa-uninstall/commit/${CommitId}?region=${AWS::Region}", { "CommitId": "#{SourceVariables.CommitId}"}]},
+                           "CustomData": {"Fn::Sub": "Please review the ROSA cluster to UNINSTALL and approve this change for ${AWS::AccountId} . Commit message: #{SourceVariables.CommitMessage}"}
+                        },
+                        "RunOrder": 1
+                    }
+                ]
+              },{
+                "Name": "DeleteClusterAdmin",
+                "Actions": [{
+                  "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                  "Name":"Delete-Cluster-Admin",
+                  "ActionTypeId": {
+                      "Category": "Build",
+                      "Owner": "AWS",
+                      "Version": "1",
+                      "Provider": "CodeBuild"
+                  },
+                  "Configuration": {
+                      "ProjectName":{"Ref":"ProjCreateROSACluster"},
+                      "EnvironmentVariables": "[{\"name\":\"Execution_ID\",\"value\":\"#{codepipeline.PipelineExecutionId}\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_ACTION\",\"value\":\"delete_cluster_admin_login\",\"type\":\"PLAINTEXT\"}]"
+                      }
+                }]
+              },{
+                  "Name": "DeleteROSACluster",
+                  "Actions": [{
+                    "InputArtifacts":[{"Name":"SourceArtifacts"}],
+                    "Name":"Delete-ROSA-Cluster",
+                    "ActionTypeId": {
+                        "Category": "Build",
+                        "Owner": "AWS",
+                        "Version": "1",
+                        "Provider": "CodeBuild"
+                    },
+                    "Configuration": {
+                        "ProjectName":{"Ref":"ProjCreateROSACluster"},
+                        "EnvironmentVariables": "[{\"name\":\"Execution_ID\",\"value\":\"#{codepipeline.PipelineExecutionId}\",\"type\":\"PLAINTEXT\"},{\"name\":\"ROSA_INSTALL_ACTION\",\"value\":\"delete_cluster\",\"type\":\"PLAINTEXT\"}]"
+                    }
+                  }]
+                }
+              ]
+            }
+      },
+      "AmazonCloudWatchEventRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": [
+                    "events.amazonaws.com"
+                  ]
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "Path": "/",
+          "Policies": [
+            {
+              "PolicyName": "cwe-pipeline-execution",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": "codepipeline:StartPipelineExecution",
+                    "Resource": [
+                      {"Fn::Join": ["",["arn:aws:codepipeline:",{"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},":","ROSA-Install-Pipeline"]]},
+                      {"Fn::Join": ["",["arn:aws:codepipeline:",{"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},":","ROSA-Delete-Pipeline"]]}
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "ROSAInstallCloudWatchEventRule": {
+        "Type": "AWS::Events::Rule",
+        "Properties": {
+          "EventPattern": {
+            "source": ["aws.codecommit"],
+            "detail-type": ["CodeCommit Repository State Change"],
+            "resources": [
+              {"Fn::GetAtt":["ROSAInstallIaCCodeCommitRepo", "Arn"]}
+            ],
+            "detail": {
+              "event": [
+                "referenceCreated",
+                "referenceUpdated"
+              ],
+              "referenceType": ["branch"],
+              "referenceName": ["main"]
+            }
+          },
+          "Targets": [{
+            "Arn": {"Fn::Join": ["",["arn:aws:codepipeline:",{"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},":","ROSA-Install-Pipeline"]]},
+            "RoleArn": {
+              "Fn::GetAtt": ["AmazonCloudWatchEventRole","Arn"]
+            },
+            "Id": "codepipeline-AppPipeline"
+          }]
+        }
+      },
+      "ROSAUnInstallCloudWatchEventRule": {
+        "Type": "AWS::Events::Rule",
+        "Properties": {
+          "EventPattern": {
+            "source": ["aws.codecommit"],
+            "detail-type": ["CodeCommit Repository State Change"],
+            "resources": [
+              {"Fn::GetAtt":["ROSAUnInstallIaCCodeCommitRepo", "Arn"]}
+            ],
+            "detail": {
+              "event": [
+                "referenceCreated",
+                "referenceUpdated"
+              ],
+              "referenceType": ["branch"],
+              "referenceName": ["main"]
+            }
+          },
+          "Targets": [{
+            "Arn": {"Fn::Join": ["",["arn:aws:codepipeline:",{"Ref": "AWS::Region"},":",{"Ref": "AWS::AccountId"},":","ROSA-Delete-Pipeline"]]},
+            "RoleArn": {
+              "Fn::GetAtt": ["AmazonCloudWatchEventRole","Arn"]
+            },
+            "Id": "codepipeline-AppPipeline"
+          }]
+        }
+      }, 
+      "S3GatewayEndpointCodePipelineVPC": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": { 
+           "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                 "Effect": "Allow",
+                 "Principal": "*",
+                 "Action": ["*"],
+                 "Resource": ["*"]
+              }]
+           },
+           "RouteTableIds": {"Ref": "CodePipelineVPCRouteTables"}, 
+           "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.s3"},
+           "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },
+      "ECRAPICodePipelineVPCEndPoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.api"},
+          "SecurityGroupIds": [
+          {"Ref": "CodePipelineSecurityGroup"}
+          ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      }, 
+      "ECRDKRCodePipelineVPCEndPoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ecr.dkr"},
+          "SecurityGroupIds": [
+            {"Ref": "CodePipelineSecurityGroup"}
+          ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },
+      "GitCodeCommitCodePipelineVPCEndPoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.git-codecommit"},
+          "SecurityGroupIds": [
+            {"Ref": "CodePipelineSecurityGroup"}
+            ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },
+      "CodeCommitCodePipelineVPCEndPoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.codecommit"},
+          "SecurityGroupIds": [
+            {"Ref": "CodePipelineSecurityGroup"}
+            ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },
+      "LogsCodePipelineVPCEndPoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.logs"},
+          "SecurityGroupIds": [
+            {"Ref": "CodePipelineSecurityGroup"}
+            ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },    
+      "EC2CodePipelineVPCEndPoint": {
+          "Type": "AWS::EC2::VPCEndpoint",
+          "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.ec2"},
+          "SecurityGroupIds": [
+              {"Ref": "CodePipelineSecurityGroup"}
+          ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+        }
+      },    
+      "STSCodePipelineVPCEndPoint": {
+          "Type": "AWS::EC2::VPCEndpoint",
+          "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.sts"},
+          "SecurityGroupIds": [
+              {"Ref": "CodePipelineSecurityGroup"}
+          ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+          }
+      },    
+      "SecretsManagerCodePipelineVPCEndPoint": {
+          "Type": "AWS::EC2::VPCEndpoint",
+          "Properties": {
+          "ServiceName": {"Fn::Sub": "com.amazonaws.${AWS::Region}.secretsmanager"},
+          "SecurityGroupIds": [
+              {"Ref": "CodePipelineSecurityGroup"}
+          ],
+          "SubnetIds": {"Ref":"CodePipelineSubnets"} ,
+          "VpcEndpointType": "Interface",
+          "PrivateDnsEnabled": true,
+          "VpcId": {"Ref": "CodePipelineVPC"}
+          }
+      },
+      "ROSATokenSecret": {
+        "Condition": "cEnableRosaTokenSecret",
+        "Type": "AWS::SecretsManager::Secret",
+        "DeletionPolicy": "Retain",
+        "UpdateReplacePolicy" : "Retain",
+        "Properties": {
+            "Name" : "ROSA_TOKEN",
+            "KmsKeyId" : {"Ref": "rRosaCodeBuildKMSAlias"},
+            "SecretString" : {"Ref": "pRosaToken"},
+            "Description": "OpenShift Cluster Manager API Token, extract token from: https://console.redhat.com/openshift/token and update secret prior to cluster creation, register for a new account at: https://sso.redhat.com/auth/realms/redhat-external/login-actions/registration?execution=9ec9ca44-2f3b-4b60-ac66-299705730f29&client_id=https%3A%2F%2Fwww.redhat.com%2Fwapps%2Fugc-oidc&tab_id=49SAYvzA1rA"
+        }
+      }
+  },
+  "Outputs": {
+    "CloneUrl1": {
+      "Value": { "Fn::GetAtt": ["ROSAInstallIaCCodeCommitRepo","Name"] },
+      "Description": "URL for git-remote-codecommit cloning the Repo codecommit::us-east-1://<name> "
+    },"CloneUrl2": {
+      "Value": { "Fn::GetAtt": ["ROSAUnInstallIaCCodeCommitRepo","Name"] },
+      "Description": "URL for git-remote-codecommit cloning the Repo codecommit::us-east-1://<name> "
+    },"CloneUrl3": {
+      "Value": { "Fn::GetAtt": ["ROSACodePipelineBuildSpecsRepo","Name"] },
+      "Description": "URL for git-remote-codecommit cloning the Repo codecommit::us-east-1://<name> "
+    },"ContainerImageURI":{
+      "Value": { "Fn::Sub":["${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ROSAInstallContainerECRRepoName}:latest", { "ROSAInstallContainerECRRepoName": {"Ref":"ROSAInstallContainerECRRepoName"}} ] },
+      "Description": "URI for the published ROSA Installation container image in ECR"
+    }
+  }  
+}

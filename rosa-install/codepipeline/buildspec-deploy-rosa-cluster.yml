@@ -1,0 +1,27 @@
+version: 0.2
+env:
+  git-credential-helper: yes
+  exported-variables:
+    - ROSA_PRIVATE_HOSTED_ZONES
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+  pre_build:
+    commands:
+      - ls -al
+      - ls -al ${CODEBUILD_SRC_DIR_buildspecScripts}
+      - chmod a+x ${CODEBUILD_SRC_DIR_buildspecScripts}/codepipeline_scripts.sh
+      - ${CODEBUILD_SRC_DIR_buildspecScripts}/codepipeline_scripts.sh pre_build
+  build:
+    commands:
+      - ${CODEBUILD_SRC_DIR_buildspecScripts}/codepipeline_scripts.sh build  
+  post_build:
+    commands:
+      - ${CODEBUILD_SRC_DIR_buildspecScripts}/codepipeline_scripts.sh post_build
+    finally:
+      - ${CODEBUILD_SRC_DIR_buildspecScripts}/codepipeline_scripts.sh finally
+artifacts:
+  base-directory: '/root/.aws'
+  files:
+    - '**/*' 
